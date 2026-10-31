@@ -4,6 +4,7 @@ import React, {
     useCallback,
     useEffect,
     useState,
+    useSyncExternalStore,
     type ReactNode,
     type MouseEvent as ReactMouseEvent,
 } from 'react';
@@ -22,6 +23,7 @@ import { SortableContext, useSortable } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { tinykeys } from 'tinykeys';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { cn } from '@common/cn';
 import { RequestStatus } from '@common/constant';
@@ -33,6 +35,34 @@ import { isSameMedia } from '@common/mediaKey';
 import formatDuration from '@common/formatDuration';
 import appConfig from '@infra/appConfig/renderer';
 import trackPlayer from '../../../core/trackPlayer';
+
+/**
+ * 底部状态的极简订阅容器。
+ *
+ * 底部 Footer 是通过 Virtuoso 的 components 注入的，父组件重渲染不会带着它一起更新。
+ * 之前直接用 ref 读状态，导致界面停在某个旧值上：
+ * 加载失败后一直显示「点击重试」，看不到「加载中…」和「没有更多了」。
+ */
+function createFooterStatusStore(initial: RequestStatus) {
+    let value = initial;
+    const listeners = new Set<() => void>();
+    return {
+        get: () => value,
+        set: (next: RequestStatus) => {
+            if (next === value) {
+                return;
+            }
+            value = next;
+            listeners.forEach((listener) => listener());
+        },
+        subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+    };
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -74,6 +104,11 @@ export interface SongTableProps {
     enableLoadMore?: boolean;
     /** 加载更多的状态 */
     loadMoreStatus?: RequestStatus;
+    /**
+     * 即使已经不加载更多，也在底部显示状态（用于展示「没有更多了」）。
+     * enableLoadMore 为 false 时本组件不会触发加载，这里只是让完成态可见。
+     */
+    showNoMore?: boolean;
     /** 触发加载更多 */
     onLoadMore?: () => void;
     /** 加载更多失败时的重试 */
@@ -303,9 +338,10 @@ export function SongTable({
     onRetry,
     enableLoadMore = false,
     loadMoreStatus,
+    showNoMore = false,
     onLoadMore,
     onLoadMoreRetry,
-    enableSelection = false,
+    enableSelection = true,
     selectedIds: externalSelectedIds,
     onSelectionChange,
     enableDragSort = false,
@@ -359,6 +395,35 @@ export function SongTable({
 
     const selectedIdsRef = useRef(selectedIds);
     selectedIdsRef.current = selectedIds;
+
+    // ── 选区生命周期 ──────────────────────────────────────────────────────
+    // 1) 切换界面即清空。同一路由组件换参数时（专辑 A → 专辑 B、榜单 A → 榜单 B），
+    //    React 会复用组件实例，选中态不会随之重建，会残留到新页面上。
+    //    以 pathname 为准复位；搜索词变了 pathname 也就变了，一并覆盖。
+    const { pathname } = useLocation();
+    useEffect(() => {
+        if (!selectedIdsRef.current.size) {
+            return;
+        }
+        setSelectedIds(new Set());
+        lastClickIndexRef.current = -1;
+    }, [pathname]);
+
+    // 2) 同页内数据收敛。搜索过滤 / 删除会让部分 id 消失，只保留仍然存在的，
+    //    避免"看不见的行"仍然处于选中态。
+    useEffect(() => {
+        const current = selectedIdsRef.current;
+        if (!current.size) {
+            return;
+        }
+        const alive = new Set(data.map((d) => d.id));
+        const next = new Set([...current].filter((id) => alive.has(id)));
+        if (next.size !== current.size) {
+            setSelectedIds(next);
+            lastClickIndexRef.current = -1;
+        }
+    }, [data]);
+
     const currentMusicRef = useRef(currentMusic);
     currentMusicRef.current = currentMusic;
 
@@ -571,6 +636,19 @@ export function SongTable({
     const onLoadMoreRetryRef = useRef(onLoadMoreRetry);
     onLoadMoreRetryRef.current = onLoadMoreRetry;
 
+    // ── 底部状态：Footer 由 Virtuoso 注入，父组件重渲染不会带着它更新，
+    //    所以用一个小订阅容器把状态推给它。否则界面会停在旧值：
+    //    加载失败后一直显示「点击重试」，看不到「加载中…」和「没有更多了」。
+    const footerStatusStoreRef = useRef(
+        createFooterStatusStore(loadMoreStatus ?? RequestStatus.Idle),
+    );
+    const footerStatus = enableLoadMore
+        ? (loadMoreStatus ?? RequestStatus.Idle)
+        : RequestStatus.Done;
+    useEffect(() => {
+        footerStatusStoreRef.current.set(footerStatus);
+    }, [footerStatus]);
+
     // ── 辅助：根据 selectedIds 从 data 中解析出选中项列表 ──
     const resolveSelectedItems = useCallback(
         (ids: Set<string>): IMusic.IMusicItemBase[] => dataRef.current.filter((d) => ids.has(d.id)),
@@ -714,8 +792,33 @@ export function SongTable({
     }, [activeDragId, sortedData]);
 
     // ── 加载更多 ──
+    // 同一份数据只放行一次 endReached。
+    //
+    // 列表内容不足以填满视口时（只有一页、或某页只回来几条），Virtuoso 会认为
+    // 视口始终停在底部，每次渲染后都报告一次 endReached。只按状态挡
+    // （Pending / Error）并不够：请求成功后状态回到 Idle，闸门又被重新打开，
+    // 于是形成「请求 → 成功 → 再请求」的空转循环，底部「加载中…」反复出现又消失，
+    // 表现为界面抽搐。
+    //
+    // 指纹 = 条数 + 首尾 id：只有数据集合真的变了才允许下一次触发。
+    const endReachedGuardRef = useRef('');
     const handleEndReached = useCallback(() => {
-        if (loadMoreStatusRef.current === RequestStatus.Pending) return;
+        const loadStatus = loadMoreStatusRef.current;
+        // Error 也挡：失败后停下来，交给用户点「点击重试」。
+        if (loadStatus === RequestStatus.Pending || loadStatus === RequestStatus.Error) {
+            return;
+        }
+
+        const list = dataRef.current;
+        const fingerprint =
+            list.length === 0
+                ? '0'
+                : `${list.length}|${list[0]?.id ?? ''}|${list[list.length - 1]?.id ?? ''}`;
+        if (endReachedGuardRef.current === fingerprint) {
+            return;
+        }
+        endReachedGuardRef.current = fingerprint;
+
         onLoadMore?.();
     }, [onLoadMore]);
 
@@ -895,22 +998,26 @@ export function SongTable({
 
     // ── 底部 Footer ──
     const FooterComponent = useMemo(() => {
-        if (!enableLoadMore) return undefined;
+        if (!enableLoadMore && !showNoMore) return undefined;
         return function TableFoot() {
+            // 订阅底部状态：Virtuoso 注入的组件不会随父组件重渲染，
+            // 自己订阅才能实时切换到「加载中…」/「没有更多了」/「点击重试」
+            const status = useSyncExternalStore(
+                footerStatusStoreRef.current.subscribe,
+                footerStatusStoreRef.current.get,
+                footerStatusStoreRef.current.get,
+            );
             return (
                 <tfoot>
                     <tr>
                         <td colSpan={totalColumnCount}>
-                            <ListFooter
-                                status={loadMoreStatusRef.current ?? RequestStatus.Done}
-                                onRetry={onLoadMoreRetryRef.current}
-                            />
+                            <ListFooter status={status} onRetry={onLoadMoreRetryRef.current} />
                         </td>
                     </tr>
                 </tfoot>
             );
         };
-    }, [enableLoadMore, totalColumnCount]);
+    }, [enableLoadMore, showNoMore, totalColumnCount]);
 
     // ── 合并 virtuoso components（稳定引用） ──
     const finalComponents = useMemo(
@@ -939,6 +1046,15 @@ export function SongTable({
             ref={setContainerEl}
             className={cn('song-table', className)}
             tabIndex={enableSelection ? 0 : undefined}
+            onMouseDown={(e) => {
+                // 点击空白处（不在任何行、也不在表头上）视为放弃选择。
+                // 相当于"焦点离开列表"时的自然复位，且不会和工具栏按钮冲突。
+                const target = e.target as HTMLElement | null;
+                if (enableSelection && !target?.closest?.('tr')) {
+                    setSelectedIds(new Set());
+                    lastClickIndexRef.current = -1;
+                }
+            }}
         >
             <TableVirtuoso
                 ref={virtuosoRef}

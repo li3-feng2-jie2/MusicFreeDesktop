@@ -6,6 +6,7 @@
  */
 
 import { useCallback } from 'react';
+import { useSelection } from '../../LocalMusicPage/hooks/useSelection';
 import { useAtomValue } from 'jotai/react';
 import { RequestStatus } from '@common/constant';
 import { SongTable } from '../../../components/business/SongTable';
@@ -23,11 +24,16 @@ export function MusicResult({ pluginHash }: MusicResultProps) {
     const results = useAtomValue(searchResultsAtom);
     const type: SearchMediaType = 'music';
     const record = results[type][pluginHash];
-    const { search, loadMore } = useSearch();
+    const { search, loadMore, retryLoadMore } = useSearch();
 
     const data = record?.data ?? [];
     const status = record?.status ?? RequestStatus.Idle;
     const isEnd = record?.isEnd ?? false;
+    const loadMoreStatus = record?.loadMoreStatus ?? RequestStatus.Idle;
+
+    // 启用键盘多选（Shift 范围 / Ctrl 点选 / Ctrl+A 全选）。
+    // 换插件或换关键词时清空选区；加载更多（data 变化）不清空。
+    const { selectionProps } = useSelection([pluginHash, record?.query]);
 
     const handleRetry = useCallback(() => {
         if (record?.query) {
@@ -39,8 +45,14 @@ export function MusicResult({ pluginHash }: MusicResultProps) {
         loadMore(type, pluginHash);
     }, [loadMore, pluginHash]);
 
+    // 底部「点击重试」：绕过失败闸门，手动再拉一次
+    const handleRetryLoadMore = useCallback(() => {
+        retryLoadMore(type, pluginHash);
+    }, [retryLoadMore, pluginHash]);
+
     return (
         <SongTable
+            {...selectionProps}
             data={data}
             requestStatus={status}
             statusColumn={(item) => (
@@ -63,10 +75,11 @@ export function MusicResult({ pluginHash }: MusicResultProps) {
                 );
             }}
             onRetry={handleRetry}
-            enableLoadMore={!isEnd && status !== RequestStatus.Idle}
-            loadMoreStatus={status === RequestStatus.Done ? RequestStatus.Idle : status}
+            enableLoadMore={!isEnd && data.length > 0 && status !== RequestStatus.Idle}
+            loadMoreStatus={loadMoreStatus}
+            showNoMore={isEnd && data.length > 0}
             onLoadMore={handleLoadMore}
-            onLoadMoreRetry={handleLoadMore}
+            onLoadMoreRetry={handleRetryLoadMore}
         />
     );
 }
