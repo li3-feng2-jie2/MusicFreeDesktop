@@ -1,10 +1,12 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useAtomValue, useSetAtom } from 'jotai/react';
 import { FolderOpen } from 'lucide-react';
 import appConfig from '@infra/appConfig/renderer';
 import systemUtil from '@infra/systemUtil/renderer';
 import { useDownloadTasks } from '@infra/downloadManager/renderer';
 import { TabBar, type TabItem } from '../../components/ui/TabBar';
+import { downloadTabAtom } from '../../common/pageTabs';
 import { Button } from '../../components/ui/Button';
 import { TaskTable } from './components/TaskTable';
 import { CompletedTab } from './components/CompletedTab';
@@ -40,7 +42,9 @@ const TAB_ITEMS: TabItem[] = [
  */
 export default function DownloadPage() {
     const { t } = useTranslation();
-    const [activeTab, setActiveTab] = useState<DownloadTab>('queue');
+    // tab 提到 atom：切走再回来仍停在原来的 tab
+    const activeTab = useAtomValue(downloadTabAtom);
+    const setActiveTab = useSetAtom(downloadTabAtom);
 
     const tabItems = useMemo<TabItem[]>(
         () =>

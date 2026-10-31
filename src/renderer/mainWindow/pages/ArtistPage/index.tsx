@@ -1,6 +1,7 @@
-import { useState, useMemo, useCallback, type MouseEvent } from 'react';
+import { useMemo, useCallback, type MouseEvent } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { useAtomValue, useSetAtom } from 'jotai/react';
 import { RequestStatus } from '@common/constant';
 import trackPlayer from '@renderer/mainWindow/core/trackPlayer';
 import { SongTable, type RowInteractionDetail } from '../../components/business/SongTable';
@@ -9,6 +10,7 @@ import { DownloadButton } from '../../components/business/DownloadButton';
 import { SongToolbar } from '../../components/ui/SongToolbar';
 import { MediaGrid } from '../../components/ui/MediaGrid';
 import { TabBar, type TabItem } from '../../components/ui/TabBar';
+import { artistTabAtom } from '../../common/pageTabs';
 import { ListFooter } from '../../components/ui/ListFooter';
 import { StatusPlaceholder } from '../../components/ui/StatusPlaceholder';
 import { showContextMenu } from '../../components/ui/ContextMenu/contextMenuManager';
@@ -49,7 +51,15 @@ export default function ArtistPage() {
     }, [platform, id, location.state]);
 
     // ── Tab 切换 ──
-    const [activeTab, setActiveTab] = useState<IArtist.ArtistMediaType>('music');
+    // tab 提到 atom，并带上歌手 id：同一个歌手返回时恢复上次的 tab，
+    // 换成另一个歌手时落回默认「单曲」，不会串味
+    const artistTabState = useAtomValue(artistTabAtom);
+    const setArtistTabState = useSetAtom(artistTabAtom);
+    const activeTab = artistTabState.id === (id ?? '') ? artistTabState.tab : 'music';
+    const setActiveTab = useCallback(
+        (next: IArtist.ArtistMediaType) => setArtistTabState({ id: id ?? '', tab: next }),
+        [id, setArtistTabState],
+    );
 
     // ── 两个 Tab 的 hook 都提到 Page 层，切换时不丢失数据 ──
     const musicWorks = useArtistWorks(originalItem, 'music');

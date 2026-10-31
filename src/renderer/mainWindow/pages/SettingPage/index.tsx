@@ -1,5 +1,6 @@
-import { useState, useMemo, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useAtomValue, useSetAtom } from 'jotai/react';
 import {
     SlidersHorizontal,
     PlayCircle,
@@ -12,6 +13,7 @@ import {
     Info,
 } from 'lucide-react';
 import { TabBar, type TabItem } from '@renderer/mainWindow/components/ui/TabBar';
+import { settingSectionAtom } from '@renderer/mainWindow/common/pageTabs';
 import { GeneralSection } from './sections/GeneralSection';
 import { PlaybackSection } from './sections/PlaybackSection';
 import { DownloadSection } from './sections/DownloadSection';
@@ -45,7 +47,9 @@ const SECTION_MAP: Record<string, () => ReactNode> = {
  */
 export default function SettingPage() {
     const { t } = useTranslation();
-    const [activeKey, setActiveKey] = useState('general');
+    // 分区提到 atom：离开设置页再回来，仍停在原来的分区
+    const activeKey = useAtomValue(settingSectionAtom);
+    const setActiveKey = useSetAtom(settingSectionAtom);
 
     const sectionTabs: TabItem[] = useMemo(
         () => [

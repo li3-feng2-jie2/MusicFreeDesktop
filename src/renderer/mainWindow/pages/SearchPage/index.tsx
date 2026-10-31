@@ -12,7 +12,7 @@
  * 状态全部由 jotai store 管理，方便未来前进/后退恢复。
  */
 
-import { useEffect, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 import { useAtomValue, useSetAtom } from 'jotai/react';
@@ -36,6 +36,7 @@ import {
     store,
 } from './store';
 import { useSearch } from './useSearch';
+import { onBeforeRefresh } from '../../common/refresh';
 import './index.scss';
 
 // ── 组件映射 ──
@@ -60,21 +61,33 @@ export default function SearchPage() {
     const setPluginPerType = useSetAtom(activePluginPerTypeAtom);
 
     const { search } = useSearch();
-    const prevQueryRef = useRef('');
 
     // ── query 变化 → 重置状态 & 触发首次搜索 ──
+    // 判重基准用 store 里的 searchQueryAtom，而不是组件内的 ref。
+    // 用 ref 时：点进歌单再返回，组件重新挂载、ref 被重置成 ''，
+    // 于是这里会误判成"新搜索"，把 activeType 打回音乐、把结果清空重拉。
     useEffect(() => {
-        if (!query || query === prevQueryRef.current) return;
-        prevQueryRef.current = query;
+        if (!query) return;
+
+        const prevQuery = store.get(searchQueryAtom);
+        if (prevQuery === query) {
+            // 同一关键词：多半是前进/后退或从详情页返回，保留 tab 与已有结果
+            return;
+        }
+
+        store.set(searchQueryAtom, query);
 
         // 重置结果
         resetSearchResults();
-        store.set(searchQueryAtom, query);
 
-        // 重置 activeType 到 music — 使用 React setter 确保同一渲染周期可见
+        // 新关键词才重置 activeType 到 music
         setActiveType('music');
         // 不重置 pluginPerType — 保留用户之前选择的插件偏好
     }, [query, setActiveType]);
+
+    // F5 刷新：搜索结果缓存在 jotai 里，单纯重挂不会重新拉数据，
+    // 所以先把该缓存清掉（page 回到 1），重挂后自动搜索 effect 会重新请求。
+    useEffect(() => onBeforeRefresh(resetSearchResults), []);
 
     // ── 当前 type 下可用的插件列表 ──
     const availablePlugins = useSortedSearchablePlugins(activeType);

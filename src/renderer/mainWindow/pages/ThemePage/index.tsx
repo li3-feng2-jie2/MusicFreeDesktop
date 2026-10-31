@@ -1,7 +1,9 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { FolderPlus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useAtomValue, useSetAtom } from 'jotai/react';
 import { TabBar, type TabItem } from '@renderer/mainWindow/components/ui/TabBar';
+import { themeSectionAtom } from '@renderer/mainWindow/common/pageTabs';
 import { Button } from '@renderer/mainWindow/components/ui/Button';
 import { showToast } from '@renderer/mainWindow/components/ui/Toast';
 import systemUtil from '@infra/systemUtil/renderer';
@@ -24,7 +26,9 @@ import './index.scss';
  */
 export default function ThemePage() {
     const { t } = useTranslation();
-    const [activeKey, setActiveKey] = useState('local');
+    // 分区提到 atom：离开主题页再回来，仍停在原来的分区
+    const activeKey = useAtomValue(themeSectionAtom);
+    const setActiveKey = useSetAtom(themeSectionAtom);
 
     const tabs: TabItem[] = useMemo(
         () => [

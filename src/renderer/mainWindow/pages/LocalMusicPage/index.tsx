@@ -1,9 +1,10 @@
 import { useState, useMemo, useCallback, useDeferredValue, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useAtomValue } from 'jotai/react';
+import { useAtomValue, useSetAtom } from 'jotai/react';
 import { FolderSearch, Search, RefreshCw } from 'lucide-react';
 import { RequestStatus } from '@common/constant';
 import { TabBar, type TabItem } from '../../components/ui/TabBar';
+import { localMusicTabAtom } from '../../common/pageTabs';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { SongTable } from '../../components/business/SongTable';
@@ -63,7 +64,9 @@ export default function LocalMusicPage() {
     }, []);
 
     // ── Tab 状态 ──
-    const [activeTab, setActiveTab] = useState<LocalMusicTab>('songs');
+    // tab 提到 atom：从详情页返回 / 切走再回来，仍停在原来的 tab
+    const activeTab = useAtomValue(localMusicTabAtom);
+    const setActiveTab = useSetAtom(localMusicTabAtom);
 
     // ── 搜索 ──
     const [searchValue, setSearchValue] = useState('');
