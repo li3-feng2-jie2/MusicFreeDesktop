@@ -31,7 +31,7 @@ export function ArtistResult({ pluginHash }: ArtistResultProps) {
     const results = useAtomValue(searchResultsAtom);
     const type: SearchMediaType = 'artist';
     const record = results[type][pluginHash];
-    const { search, loadMore } = useSearch();
+    const { search, loadMore, retryLoadMore } = useSearch();
     const navigate = useNavigate();
     const { t } = useTranslation();
 
@@ -47,6 +47,7 @@ export function ArtistResult({ pluginHash }: ArtistResultProps) {
     const data = record?.data ?? [];
     const status = record?.status ?? RequestStatus.Idle;
     const isEnd = record?.isEnd ?? false;
+    const loadMoreStatus = record?.loadMoreStatus ?? RequestStatus.Idle;
 
     const handleRetry = useCallback(() => {
         if (record?.query) {
@@ -58,10 +59,24 @@ export function ArtistResult({ pluginHash }: ArtistResultProps) {
         loadMore(type, pluginHash);
     }, [loadMore, pluginHash]);
 
+    // 底部「点击重试」：绕过失败闸门，手动再拉一次
+    const handleRetryLoadMore = useCallback(() => {
+        retryLoadMore(type, pluginHash);
+    }, [retryLoadMore, pluginHash]);
+
     // ── IntersectionObserver 哨兵 ──
     const sentinelRef = useRef<HTMLDivElement>(null);
-    const enableLoadMore = !isEnd && status !== RequestStatus.Idle;
-    const loadMoreStatus = status === RequestStatus.Done ? RequestStatus.Idle : status;
+    const enableLoadMore = !isEnd && data.length > 0 && status !== RequestStatus.Idle;
+    const showNoMore = isEnd && data.length > 0;
+
+    // 状态与回调放 ref：它们变化时若重建 observer，observe 会立刻再触发一次，
+    // 列表填不满一屏时就变成「请求 → 成功 → 再请求」的空转。
+    const loadMoreStatusRef = useRef(loadMoreStatus);
+    loadMoreStatusRef.current = loadMoreStatus;
+    const onLoadMoreRef = useRef(handleLoadMore);
+    onLoadMoreRef.current = handleLoadMore;
+    // 同一份数据只放行一次
+    const guardLenRef = useRef(-1);
 
     useEffect(() => {
         if (!enableLoadMore) return;
@@ -70,16 +85,23 @@ export function ArtistResult({ pluginHash }: ArtistResultProps) {
 
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0]?.isIntersecting && loadMoreStatus !== RequestStatus.Pending) {
-                    handleLoadMore();
-                }
+                if (!entries[0]?.isIntersecting) return;
+
+                const st = loadMoreStatusRef.current;
+                // 失败后不自动重试，等用户点「点击重试」
+                if (st === RequestStatus.Pending || st === RequestStatus.Error) return;
+                // 条数没变说明上一次拉取没带来新数据，不再空转
+                if (guardLenRef.current === data.length) return;
+
+                guardLenRef.current = data.length;
+                onLoadMoreRef.current?.();
             },
             { rootMargin: '200px' },
         );
 
         observer.observe(sentinel);
         return () => observer.disconnect();
-    }, [enableLoadMore, handleLoadMore, loadMoreStatus]);
+    }, [enableLoadMore, data.length]);
 
     // ── 首次加载占位 ──
     if (data.length === 0) {
@@ -119,7 +141,12 @@ export function ArtistResult({ pluginHash }: ArtistResultProps) {
             </div>
 
             {enableLoadMore && <div ref={sentinelRef} style={{ height: 1 }} />}
-            {enableLoadMore && <ListFooter status={loadMoreStatus} onRetry={handleLoadMore} />}
+            {(enableLoadMore || showNoMore) && (
+                <ListFooter
+                    status={enableLoadMore ? loadMoreStatus : RequestStatus.Done}
+                    onRetry={handleRetryLoadMore}
+                />
+            )}
         </div>
     );
 }

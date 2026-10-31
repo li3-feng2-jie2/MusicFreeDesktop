@@ -45,6 +45,11 @@ export interface MediaGridProps {
     enableLoadMore?: boolean;
     /** 加载更多状态 */
     loadMoreStatus?: RequestStatus;
+    /**
+     * 即使已经不加载更多，也在底部显示状态（用于展示「没有更多了」）。
+     * enableLoadMore 为 false 时不会触发加载，这里只是让完成态可见。
+     */
+    showNoMore?: boolean;
     /** 加载更多回调 */
     onLoadMore?: () => void;
     /** 加载更多重试 */
@@ -85,6 +90,7 @@ export function MediaGrid({
     emptyIcon,
     enableLoadMore = false,
     loadMoreStatus,
+    showNoMore = false,
     onLoadMore,
     onLoadMoreRetry,
     placeholderIcon,
@@ -92,24 +98,39 @@ export function MediaGrid({
 }: MediaGridProps) {
     // ── IntersectionObserver 哨兵（加载更多） ──
     const sentinelRef = useRef<HTMLDivElement>(null);
+    // 状态与回调放 ref：它们变化时若重建 observer，observe 会立刻再触发一次，
+    // 列表填不满一屏时就变成「请求 → 成功 → 再请求」的空转。
+    const loadMoreStatusRef = useRef(loadMoreStatus);
+    loadMoreStatusRef.current = loadMoreStatus;
+    const onLoadMoreRef = useRef(onLoadMore);
+    onLoadMoreRef.current = onLoadMore;
+    // 同一份数据只放行一次
+    const guardLenRef = useRef(-1);
 
     useEffect(() => {
-        if (!enableLoadMore || !onLoadMore) return;
+        if (!enableLoadMore) return;
         const sentinel = sentinelRef.current;
         if (!sentinel) return;
 
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0]?.isIntersecting && loadMoreStatus !== RequestStatus.Pending) {
-                    onLoadMore();
-                }
+                if (!entries[0]?.isIntersecting) return;
+
+                const st = loadMoreStatusRef.current;
+                // 失败后不自动重试，等用户点「点击重试」
+                if (st === RequestStatus.Pending || st === RequestStatus.Error) return;
+                // 条数没变说明上一次拉取没带来新数据，不再空转
+                if (guardLenRef.current === data.length) return;
+
+                guardLenRef.current = data.length;
+                onLoadMoreRef.current?.();
             },
             { rootMargin: '200px' },
         );
 
         observer.observe(sentinel);
         return () => observer.disconnect();
-    }, [enableLoadMore, onLoadMore, loadMoreStatus]);
+    }, [enableLoadMore, data.length]);
 
     // ── 首次加载占位 ──
     if (data.length === 0) {
@@ -158,9 +179,11 @@ export function MediaGrid({
 
             {/* 加载更多哨兵 */}
             {enableLoadMore && <div ref={sentinelRef} className="media-grid__sentinel" />}
-            {enableLoadMore && (
+            {(enableLoadMore || showNoMore) && (
                 <ListFooter
-                    status={loadMoreStatus ?? RequestStatus.Done}
+                    status={
+                        enableLoadMore ? (loadMoreStatus ?? RequestStatus.Idle) : RequestStatus.Done
+                    }
                     onRetry={onLoadMoreRetry}
                 />
             )}

@@ -35,8 +35,19 @@ export interface IPluginSearchResult<T extends SearchMediaType = SearchMediaType
     page: number;
     /** 是否到底 */
     isEnd: boolean;
-    /** 请求状态 */
+    /** 首屏请求状态 */
     status: RequestStatus;
+    /**
+     * 分页（加载更多）专用状态，与首屏 status 分开。
+     * 之前两者共用一个字段，导致「加载更多成功」被当成「首屏完成」，
+     * 底部提示错乱、闸门反复重开。
+     */
+    loadMoreStatus: RequestStatus;
+    /**
+     * 首页返回的条数，作为「一页应该有多少条」的基准。
+     * 后续某页返回条数比它少 → 视为最后一页。
+     */
+    baselinePageSize: number;
     /** 累积结果 */
     data: IMedia.SupportMediaItem[T][];
 }
@@ -112,6 +123,8 @@ export function setPluginResult<T extends SearchMediaType>(
             page: 0,
             isEnd: false,
             status: RequestStatus.Idle,
+            loadMoreStatus: RequestStatus.Idle,
+            baselinePageSize: 0,
             data: [],
         } satisfies IPluginSearchResult<T>);
     const patch = typeof updater === 'function' ? updater(prev) : updater;

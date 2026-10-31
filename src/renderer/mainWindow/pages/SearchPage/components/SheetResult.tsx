@@ -23,13 +23,14 @@ export function SheetResult({ pluginHash }: SheetResultProps) {
     const results = useAtomValue(searchResultsAtom);
     const type: SearchMediaType = 'sheet';
     const record = results[type][pluginHash];
-    const { search, loadMore } = useSearch();
+    const { search, loadMore, retryLoadMore } = useSearch();
     const navigate = useNavigate();
     const { t } = useTranslation();
 
     const data = record?.data ?? [];
     const status = record?.status ?? RequestStatus.Idle;
     const isEnd = record?.isEnd ?? false;
+    const loadMoreStatus = record?.loadMoreStatus ?? RequestStatus.Idle;
 
     const handleRetry = useCallback(() => {
         if (record?.query) {
@@ -40,6 +41,11 @@ export function SheetResult({ pluginHash }: SheetResultProps) {
     const handleLoadMore = useCallback(() => {
         loadMore(type, pluginHash);
     }, [loadMore, pluginHash]);
+
+    // 底部「点击重试」：绕过失败闸门，手动再拉一次
+    const handleRetryLoadMore = useCallback(() => {
+        retryLoadMore(type, pluginHash);
+    }, [retryLoadMore, pluginHash]);
 
     const handleItemClick = useCallback(
         (item: IMusic.IMusicSheetItem) => {
@@ -56,10 +62,11 @@ export function SheetResult({ pluginHash }: SheetResultProps) {
             onItemClick={handleItemClick}
             requestStatus={status}
             onRetry={handleRetry}
-            enableLoadMore={!isEnd && status !== RequestStatus.Idle}
-            loadMoreStatus={status === RequestStatus.Done ? RequestStatus.Idle : status}
+            enableLoadMore={!isEnd && data.length > 0 && status !== RequestStatus.Idle}
+            loadMoreStatus={loadMoreStatus}
+            showNoMore={isEnd && data.length > 0}
             onLoadMore={handleLoadMore}
-            onLoadMoreRetry={handleLoadMore}
+            onLoadMoreRetry={handleRetryLoadMore}
             emptyTitle={t('search.empty_sheet')}
         />
     );

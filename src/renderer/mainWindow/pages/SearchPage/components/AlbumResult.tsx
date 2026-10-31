@@ -23,13 +23,14 @@ export function AlbumResult({ pluginHash }: AlbumResultProps) {
     const results = useAtomValue(searchResultsAtom);
     const type: SearchMediaType = 'album';
     const record = results[type][pluginHash];
-    const { search, loadMore } = useSearch();
+    const { search, loadMore, retryLoadMore } = useSearch();
     const navigate = useNavigate();
     const { t } = useTranslation();
 
     const data = record?.data ?? [];
     const status = record?.status ?? RequestStatus.Idle;
     const isEnd = record?.isEnd ?? false;
+    const loadMoreStatus = record?.loadMoreStatus ?? RequestStatus.Idle;
 
     const handleRetry = useCallback(() => {
         if (record?.query) {
@@ -40,6 +41,11 @@ export function AlbumResult({ pluginHash }: AlbumResultProps) {
     const handleLoadMore = useCallback(() => {
         loadMore(type, pluginHash);
     }, [loadMore, pluginHash]);
+
+    // 底部「点击重试」：绕过失败闸门，手动再拉一次
+    const handleRetryLoadMore = useCallback(() => {
+        retryLoadMore(type, pluginHash);
+    }, [retryLoadMore, pluginHash]);
 
     // IAlbumItem extends IMusicSheetItem — direct assignment is safe
     const gridData = data as IMusic.IMusicSheetItem[];
@@ -60,10 +66,11 @@ export function AlbumResult({ pluginHash }: AlbumResultProps) {
             onItemClick={handleItemClick}
             requestStatus={status}
             onRetry={handleRetry}
-            enableLoadMore={!isEnd && status !== RequestStatus.Idle}
-            loadMoreStatus={status === RequestStatus.Done ? RequestStatus.Idle : status}
+            enableLoadMore={!isEnd && data.length > 0 && status !== RequestStatus.Idle}
+            loadMoreStatus={loadMoreStatus}
+            showNoMore={isEnd && data.length > 0}
             onLoadMore={handleLoadMore}
-            onLoadMoreRetry={handleLoadMore}
+            onLoadMoreRetry={handleRetryLoadMore}
             emptyTitle={t('search.empty_album')}
         />
     );
